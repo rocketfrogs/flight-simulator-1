@@ -2,13 +2,18 @@
 void move_down(int pwm_speed = 1023);
 void move_up(int pwm_speed = 1023);
 void hold_position();
-void encoder();
-void triggered_limit_switch();
+ICACHE_RAM_ATTR void encoder();
+ICACHE_RAM_ATTR void triggered_limit_switch();
 
 /************************* WiFi Access Point *********************************/
 
 #include <ESP8266WiFi.h>        // Include the Wi-Fi library
+#include <ESP8266mDNS.h>
+#include <WiFiUdp.h>
+#include <ArduinoOTA.h>
 #include "credentials.h"        // Include Credentials (you need to create that file in the same folder if you cloned it from git)
+
+#define DEVICE_NAME "piston-3"
 
 /*
 Content of "credentials.h" that matters for this section
@@ -53,11 +58,11 @@ Adafruit_MQTT_Client mqtt(&client, AIO_SERVER, AIO_SERVERPORT, AIO_USERNAME, AIO
 
 // Setup a feeds for publishing.
 // Notice MQTT paths for AIO follow the form: <username>/feeds/<feedname>
-Adafruit_MQTT_Publish stat_position = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/flight-simulator-1/piston-1/stat/position"); // to change for each pistons
+Adafruit_MQTT_Publish stat_position = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/flight-simulator-1/" DEVICE_NAME "/stat/position"); // to change for each pistons
 
 // Setup a feeds for subscribing to changes.
-Adafruit_MQTT_Subscribe cmnd_position = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "/flight-simulator-1/piston-1/cmnd/position"); // to change for each pistons
-Adafruit_MQTT_Subscribe cmnd_speed = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "/flight-simulator-1/piston-1/cmnd/speed"); // to change for each pistons
+Adafruit_MQTT_Subscribe cmnd_position = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "/flight-simulator-1/" DEVICE_NAME "/cmnd/position"); // to change for each pistons
+Adafruit_MQTT_Subscribe cmnd_speed = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "/flight-simulator-1/" DEVICE_NAME "/cmnd/speed"); // to change for each pistons
 
 
 // Bug workaround for Arduino 1.6.6, it seems to need a function declaration
@@ -67,37 +72,30 @@ void MQTT_connect();
 
 ///////////////////// initialize variables  ///////////////////////////
 
+const float max_position = 725;              // CHANGE TO THE RIGHT VALUE !!! (value in mm)
+const float acceptable_position_delta = 10;  // CHANGE TO THE RIGHT VALUE !!! (value in mm)
+const float encoder_step = 725./1131;        // encoder measures 1131 ticks for a corresponding distance of 725mm
 
-int target_position = 0;
+float target_position = 0;
 int target_speed = 10;  // speed set to 10% of max speed by default
-int pwm_speed = 100;    // pwm speed set to 10% of max speed by default
-int measured_position = 0;
+int pwm_speed = 1023;    // pwm speed set to 10% of max speed by default
+volatile float measured_position = max_position;
 
-int max_position = 500 ;                      // CHANGE TO THE RIGHT VALUE !!! (value in mm)
-int  acceptable_position_delta = 10 ;         // CHANGE TO THE RIGHT VALUE !!! (value in mm)
-int encoder_ratio = 10;                       // CHANGE TO THE RIGHT VALUE !!!
 
 enum {going_up,going_down,stopped} piston_status; // we declare an enum type with possible status for the piston 
 
 // Encoder 
 
 #define PIN_encoder_A D1
-int encoder_A = LOW;
-#define PIN_encoder_B D2
-int encoder_B = LOW;
-int encoder_counter = 0;
+#define PIN_encoder_B D0
 
 // limit switch
-#define PIN_limit_switch D0
-int limit_switch = LOW;  // HIGH = Trigerred = connected to ground here
+#define PIN_limit_switch D2
 
 // motor control
 #define PIN_motor_enable_1 D5
-int motor_enable_1 = HIGH;          // the enable pin are controled by ground so we initialize them at HIGH <=> OFF
 #define PIN_motor_enable_2 D6
-int motor_enable_2 = HIGH;          // the enable pin are controled by ground so we initialize them at HIGH <=> OFF
 #define PIN_motor_PWM D7
-int motor_PWM = LOW;                // the PWM pin is controled by positive PWM value so we initialize it at LOW <=> OFF
 
 
 void setup() {
@@ -116,6 +114,42 @@ void setup() {
     delay(1000);
     Serial.print(++i); Serial.print(' ');
   }
+
+  // Hostname defaults to esp8266-[ChipID]
+  ArduinoOTA.setHostname(DEVICE_NAME);
+
+  ArduinoOTA.onStart([]() {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH) {
+      type = "sketch";
+    } else { // U_FS
+      type = "filesystem";
+    }
+
+    // NOTE: if updating FS this would be the place to unmount FS using FS.end()
+    Serial.println("Start updating " + type);
+  });
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\nEnd");
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) {
+      Serial.println("Auth Failed");
+    } else if (error == OTA_BEGIN_ERROR) {
+      Serial.println("Begin Failed");
+    } else if (error == OTA_CONNECT_ERROR) {
+      Serial.println("Connect Failed");
+    } else if (error == OTA_RECEIVE_ERROR) {
+      Serial.println("Receive Failed");
+    } else if (error == OTA_END_ERROR) {
+      Serial.println("End Failed");
+    }
+  });
+  ArduinoOTA.begin();
 
   Serial.println('\n');
   Serial.println("Connection established!");  
@@ -137,9 +171,12 @@ attachInterrupt(digitalPinToInterrupt(PIN_encoder_A), encoder, RISING);
 
 pinMode(PIN_encoder_B, INPUT_PULLUP);                                               // We do not need interrupt on B as we base interuption on Encoder_A signal
 
-pinMode(PIN_limit_switch, INPUT_PULLUP);
-attachInterrupt(digitalPinToInterrupt(PIN_limit_switch), triggered_limit_switch, FALLING);    // The switch connects signal to ground when reached
- 
+pinMode(PIN_limit_switch, INPUT);
+attachInterrupt(digitalPinToInterrupt(PIN_limit_switch), triggered_limit_switch, RISING);    // The switch connects signal to ground when reached
+if (digitalRead(PIN_limit_switch)) {
+  // If the switch is already high, simulate an interrupt now
+  triggered_limit_switch();
+}
 
 // OUTPUTS
 pinMode(PIN_motor_enable_1, OUTPUT); 
@@ -149,13 +186,14 @@ pinMode(PIN_motor_PWM, OUTPUT);
 ///// initialization of the piston
 
 // tell the piston to go down slowly
-move_down(100);    // we call the move down function with a 100 out of 1023 value
+//move_down(100);    // we call the move down function with a 100 out of 1023 value
   
 
 }
 
 
 void loop() {
+  ArduinoOTA.handle();
 
   // Ensure the connection to the MQTT server is alive (this will make the first
   // connection and automatically reconnect when disconnected).  See the MQTT_connect
@@ -216,14 +254,14 @@ delay(50);
 /// 3 cases plus actions
 
 if (measured_position <= (target_position - acceptable_position_delta) ) {
-// we are below acceptable target => we go up
-move_up(pwm_speed);
+  // we are below acceptable target => we go up
+  move_up(pwm_speed);
 } else if (measured_position >= (target_position + acceptable_position_delta) ) {
-// we are above acceptable target => we go down
-move_down(pwm_speed);
+  // we are above acceptable target => we go down
+  move_down(pwm_speed);
 } else {
-// We are in the acceptable range => we stay where we are 
-hold_position();
+  // We are in the acceptable range => we stay where we are 
+  hold_position();
 }
 
 /// we repport status and publish to mqtt
@@ -285,10 +323,8 @@ void MQTT_connect() {
 
 ////////////////////////////////////////// LIMIT SWITCH INTERRUPTION FUNCTION ///////////////////////////////////////////
 
-void triggered_limit_switch() {
-  limit_switch = HIGH; // we mark the switch as being trigerred
-  measured_position = 0;
-  encoder_counter = 0;
+ICACHE_RAM_ATTR void triggered_limit_switch() {
+  measured_position = 0.0;
   if (piston_status == going_down){ // if we were going down
     hold_position(); // we stop
   }
@@ -296,18 +332,16 @@ void triggered_limit_switch() {
 
 ////////////////////////////////////////// ENCODER INTERRUPTION FUNCTION ///////////////////////////////////////////
 
-void encoder() {
+ICACHE_RAM_ATTR void encoder() {
   if (digitalRead(PIN_encoder_B)) { // we check if the other encoder signal is UP or DOWN
-    encoder_counter++;
+    measured_position+=encoder_step;
   } else {
-    encoder_counter--;
+    measured_position-=encoder_step;
   }
-  measured_position = encoder_counter / encoder_ratio;
 
-  if (measured_position > max_position) {
+  if (measured_position > max_position && piston_status == going_up) {
     hold_position(); // we stop
   }
-  
 }
 
 
@@ -316,17 +350,19 @@ void encoder() {
 void move_down(int pwm_speed){    // we set the default speed to max speed in case it's not specified ;) 
 
 // check the limit switch
-  if(limit_switch == LOW){
+  if(digitalRead(PIN_limit_switch) == LOW){
+    Serial.println("move_down");
     // limit switch unpressed => we CAN go down :)
 
     // setting the motor enable PINs to the reverse conf
-    digitalWrite(PIN_motor_enable_1, LOW); // Controled by ground so LOW = ON
-    digitalWrite(PIN_motor_enable_2, HIGH); // Controled by ground so HIGH = OFF
+    digitalWrite(PIN_motor_enable_1, HIGH); // Controled by ground so LOW = ON
+    digitalWrite(PIN_motor_enable_2, LOW); // Controled by ground so HIGH = OFF
     // setting the speed
     analogWrite(PIN_motor_PWM, pwm_speed);
     piston_status = going_down;
     
   } else {
+    Serial.println("move_down: already at the bottom");
     // else the limit switch is reached and we brake
 
     // setting the motor enable PINs to breaking conf
@@ -346,7 +382,7 @@ void move_up(int pwm_speed){    // we set the default speed to max speed in case
 
 // check the position of the piston
   if(measured_position < max_position){    // we make sure the piston position is not above the max
-
+    Serial.println("move_up");
     // setting the motor enable PINs to the forward conf
     digitalWrite(PIN_motor_enable_1, LOW);  // Controled by ground so LOW = ON
     digitalWrite(PIN_motor_enable_2, HIGH); // Controled by ground so HIGH = OFF
@@ -356,6 +392,7 @@ void move_up(int pwm_speed){    // we set the default speed to max speed in case
     
   } else {
     // else the max position is reached and we brake
+    Serial.println("move_up: already at the top");
 
     // setting the motor enable PINs to breaking conf
     digitalWrite(PIN_motor_enable_1, HIGH); // Controled by ground so HIGH = OFF
@@ -365,15 +402,13 @@ void move_up(int pwm_speed){    // we set the default speed to max speed in case
     piston_status = stopped;
     
   }
-
-  limit_switch = LOW; // we are in move up mode so the switch is reset to LOW
-
 }
 
 
 ////////////////////////////////////////// HOLD POSITION FUNCTION ///////////////////////////////////////////
 
 void hold_position(){    // we press the brake :) 
+    Serial.println("hold!");
 
     // setting the motor enable PINs to breaking conf
     digitalWrite(PIN_motor_enable_1, HIGH); // Controled by ground so HIGH = OFF
