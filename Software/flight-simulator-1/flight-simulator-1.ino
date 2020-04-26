@@ -180,7 +180,7 @@ pinMode(PIN_encoder_B, INPUT);                                                  
 
 pinMode(PIN_limit_switch, INPUT);                                                             // there is a 10K ohm pull-DOWN connected to that pin 
 attachInterrupt(digitalPinToInterrupt(PIN_limit_switch), triggered_limit_switch, FALLING);    // the switch pin is connected to VCC during the piston running and become floating when the piston reach it (we are making it ground using the pulldown)
-if (digitalRead(PIN_limit_switch)) {
+if (digitalRead(PIN_limit_switch) == LOW) {
   // If the switch is already pressed at start (meaning it is already fully down), we call the  triggered_limit_switch() interrupt fonction now as it will dot see a FALLING edge and therefore will not be able to initialize itself
   triggered_limit_switch();
 }
