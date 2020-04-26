@@ -1,9 +1,16 @@
-// function definitions
+/////////////////////////////////////////////////////////////////////////
+//////////////////////// functions declarations ///////////////////////////
+/////////////////////////////////////////////////////////////////////////
+
 void move_down(int pwm_speed = 1023);
 void move_up(int pwm_speed = 1023);
 void hold_position();
+
+// Special declarations for Interrupt pins
 ICACHE_RAM_ATTR void encoder();
 ICACHE_RAM_ATTR void triggered_limit_switch();
+
+
 
 /************************* WiFi Access Point *********************************/
 
@@ -79,23 +86,23 @@ const float encoder_step = 725./1131;        // encoder measures 1131 ticks for 
 float target_position = 0;
 int target_speed = 10;  // speed set to 10% of max speed by default
 int pwm_speed = 1023;    // pwm speed set to 10% of max speed by default
-volatile float measured_position = max_position;
+volatile float measured_position = 1000000;  // we initialize at 1 000 000 so the piston think it's very high and try to go down to whatever position it is asked to by MQTT then get initialize when it run into the limit switch
 
 
 enum {going_up,going_down,stopped} piston_status; // we declare an enum type with possible status for the piston 
 
 // Encoder 
 
-#define PIN_encoder_A D1
-#define PIN_encoder_B D0
+#define PIN_encoder_A D6
+#define PIN_encoder_B D5
 
 // limit switch
-#define PIN_limit_switch D2
+#define PIN_limit_switch D7
 
 // motor control
-#define PIN_motor_enable_1 D5
-#define PIN_motor_enable_2 D6
-#define PIN_motor_PWM D7
+#define PIN_motor_enable_1 D2
+#define PIN_motor_enable_2 D3
+#define PIN_motor_PWM D1
 
 
 void setup() {
@@ -105,7 +112,7 @@ void setup() {
   delay(10);
   Serial.println('\n');
   
-  WiFi.begin(ssid, password);             // Connect to the network
+  WiFi.begin(ssid, password);             // Connecting to the network
   Serial.print("Connecting to ");
   Serial.print(ssid); Serial.println(" ...");
 
@@ -166,15 +173,15 @@ void setup() {
 
 // INPUTS
 // (Info => https://www.arduino.cc/reference/en/language/functions/external-interrupts/attachinterrupt/)
-pinMode(PIN_encoder_A, INPUT_PULLUP); 
-attachInterrupt(digitalPinToInterrupt(PIN_encoder_A), encoder, RISING);
+pinMode(PIN_encoder_A, INPUT);                                                                // there is a 10K ohm pull-UP connected to that pin
+attachInterrupt(digitalPinToInterrupt(PIN_encoder_A), encoder, FALLING);                      // the hall sensor goes to GROUND when it sense a magnetic field
 
-pinMode(PIN_encoder_B, INPUT_PULLUP);                                               // We do not need interrupt on B as we base interuption on Encoder_A signal
+pinMode(PIN_encoder_B, INPUT);                                                                // there is a 10K ohm pull-UP connected to that pin // We do not need interrupt on B as we base interuption on Encoder_A signal
 
-pinMode(PIN_limit_switch, INPUT);
-attachInterrupt(digitalPinToInterrupt(PIN_limit_switch), triggered_limit_switch, RISING);    // The switch connects signal to ground when reached
+pinMode(PIN_limit_switch, INPUT);                                                             // there is a 10K ohm pull-DOWN connected to that pin 
+attachInterrupt(digitalPinToInterrupt(PIN_limit_switch), triggered_limit_switch, FALLING);    // the switch pin is connected to VCC during the piston running and become floating when the piston reach it (we are making it ground using the pulldown)
 if (digitalRead(PIN_limit_switch)) {
-  // If the switch is already high, simulate an interrupt now
+  // If the switch is already pressed at start (meaning it is already fully down), we call the  triggered_limit_switch() interrupt fonction now as it will dot see a FALLING edge and therefore will not be able to initialize itself
   triggered_limit_switch();
 }
 
@@ -184,9 +191,7 @@ pinMode(PIN_motor_enable_2, OUTPUT);
 pinMode(PIN_motor_PWM, OUTPUT); 
 
 ///// initialization of the piston
-
-// tell the piston to go down slowly
-//move_down(100);    // we call the move down function with a 100 out of 1023 value
+// The piston will be innitialized at start
   
 
 }
@@ -334,9 +339,9 @@ ICACHE_RAM_ATTR void triggered_limit_switch() {
 
 ICACHE_RAM_ATTR void encoder() {
   if (digitalRead(PIN_encoder_B)) { // we check if the other encoder signal is UP or DOWN
-    measured_position+=encoder_step;
-  } else {
     measured_position-=encoder_step;
+  } else {
+    measured_position+=encoder_step;
   }
 
   if (measured_position > max_position && piston_status == going_up) {
@@ -350,7 +355,7 @@ ICACHE_RAM_ATTR void encoder() {
 void move_down(int pwm_speed){    // we set the default speed to max speed in case it's not specified ;) 
 
 // check the limit switch
-  if(digitalRead(PIN_limit_switch) == LOW){
+  if(digitalRead(PIN_limit_switch) == HIGH){                                            // the switch is NOT pressed
     Serial.println("move_down");
     // limit switch unpressed => we CAN go down :)
 
@@ -360,9 +365,10 @@ void move_down(int pwm_speed){    // we set the default speed to max speed in ca
     // setting the speed
     analogWrite(PIN_motor_PWM, pwm_speed);
     piston_status = going_down;
+    Serial.println("STATUS => going Down");
     
-  } else {
-    Serial.println("move_down: already at the bottom");
+  } else {                                                                            // the switch IS pressed
+    Serial.println("asked to move_down but already at the bottom !");
     // else the limit switch is reached and we brake
 
     // setting the motor enable PINs to breaking conf
@@ -370,6 +376,7 @@ void move_down(int pwm_speed){    // we set the default speed to max speed in ca
     digitalWrite(PIN_motor_enable_2, HIGH); // Controled by ground so HIGH = OFF
     // setting the speed
     analogWrite(PIN_motor_PWM, 0);
+    Serial.println("STATUS => Stopped");
     piston_status = stopped;
     
   }
@@ -389,6 +396,7 @@ void move_up(int pwm_speed){    // we set the default speed to max speed in case
     // setting the speed
     analogWrite(PIN_motor_PWM, pwm_speed);
     piston_status = going_up;
+    Serial.println("STATUS => going Up");
     
   } else {
     // else the max position is reached and we brake
@@ -400,6 +408,7 @@ void move_up(int pwm_speed){    // we set the default speed to max speed in case
     // setting the speed
     analogWrite(PIN_motor_PWM, 0);
     piston_status = stopped;
+    Serial.println("STATUS => Stopped");
     
   }
 }
@@ -416,5 +425,6 @@ void hold_position(){    // we press the brake :)
     // setting the speed
     analogWrite(PIN_motor_PWM, 0);
     piston_status = stopped;
+    Serial.println("STATUS => Stopped");
 
 }
