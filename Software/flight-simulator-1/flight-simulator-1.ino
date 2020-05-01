@@ -122,10 +122,28 @@ enum {going_up,going_down,stopped} piston_status; // we declare an enum type wit
 ///////////////////////////////////////////////////////
 void setup() {
 
+///////////////////////////////////////////////////////
+///////////////////// Start Serial ////////////////////
+///////////////////////////////////////////////////////
+
   Serial.begin(115200); // Start the Serial communication to send messages to the computer
 
   delay(10);
   Serial.println('\n');
+
+///////////////////////////////////////////////////////
+////////////////// Start Remote Debug /////////////////
+///////////////////////////////////////////////////////
+
+// Init the simple software debugger, based on SerialDebug library
+Debug.initDebugger(debugGetDebuggerEnabled, debugHandleDebugger, debugGetHelpDebugger, debugProcessCmdDebugger); // Set the callbacks
+
+debugInitDebugger(&Debug); // Init the debugger
+
+
+///////////////////////////////////////////////////////
+//////////////////// Start Wifi ///////////////////////
+///////////////////////////////////////////////////////
   
   WiFi.begin(ssid, password);             // Connecting to the network
   Serial.print("Connecting to ");
@@ -136,6 +154,8 @@ void setup() {
     delay(1000);
     Serial.print(++i); Serial.print(' ');
   }
+
+////////////////// Initialize OTA /////////////////////
 
   // Hostname defaults to esp8266-[ChipID]
   ArduinoOTA.setHostname(DEVICE_NAME);
@@ -178,24 +198,30 @@ void setup() {
   Serial.print("IP address:\t");
   Serial.println(WiFi.localIP());         // Send the IP address of the ESP8266 to the computer
 
+
+///////////////////////////////////////////////////////
+////////////// Suscribing to MQTT topics //////////////
+///////////////////////////////////////////////////////
+
   // Setup MQTT subscription feeds.
   mqtt.subscribe(&cmnd_position);
   mqtt.subscribe(&cmnd_speed);
 
 
 
-
-/////////////////////// Initialize PINs //////////////////////////
+///////////////////////////////////////////////////////
+////////////////// Initialize PINs ////////////////////
+///////////////////////////////////////////////////////
 
 // INPUTS
 // (Info => https://www.arduino.cc/reference/en/language/functions/external-interrupts/attachinterrupt/)
-pinMode(PIN_encoder_A, INPUT_PULLUP);                                                                // there is a 10K ohm pull-UP connected to that pin
-attachInterrupt(digitalPinToInterrupt(PIN_encoder_A), encoder, RISING);                      // the hall sensor goes to GROUND when it sense a magnetic field
+pinMode(PIN_encoder_A, INPUT_PULLUP);                                                        // there is a 10K ohm pull-UP connected to that pin
+attachInterrupt(digitalPinToInterrupt(PIN_encoder_A), encoder, RISING);                      // the hall sensor goes to GROUND when it sense a magnetic field but there are NAN gates between the hall sensors and the PIN so the logic is inverted
 
-pinMode(PIN_encoder_B, INPUT_PULLUP);                                                                // there is a 10K ohm pull-UP connected to that pin // We do not need interrupt on B as we base interuption on Encoder_A signal
+pinMode(PIN_encoder_B, INPUT_PULLUP);                                                        // there is a 10K ohm pull-UP connected to that pin // We do not need interrupt on B as we base interuption on Encoder_A signal
 
-pinMode(PIN_limit_switch, INPUT);                                                             // there is a 10K ohm pull-DOWN connected to that pin 
-attachInterrupt(digitalPinToInterrupt(PIN_limit_switch), triggered_limit_switch, RISING);    // the switch pin is connected to VCC during the piston running and become floating when the piston reach it (we are making it ground using the pulldown)
+pinMode(PIN_limit_switch, INPUT);                                                            // there is a 10K ohm pull-DOWN connected to that pin 
+attachInterrupt(digitalPinToInterrupt(PIN_limit_switch), triggered_limit_switch, RISING);    // there is a NAN gate between the switch and the PIN so the logic is inverted (Rising = Linit Switch triggered)
 if (digitalRead(PIN_limit_switch) == HIGH) {
   // If the switch is already pressed at start (meaning it is already fully down), we call the  triggered_limit_switch() interrupt fonction now as it will dot see a FALLING edge and therefore will not be able to initialize itself
   triggered_limit_switch();
@@ -353,6 +379,11 @@ if (measured_position <= (target_position - acceptable_position_delta) ) {
 /////\  ///////////////////////////////////////////////
 ///////////////////////////////////////////////////////
 
+
+///////////////////////////////////////////////////////
+//////////////// MQTT_connect Function ////////////////
+///////////////////////////////////////////////////////
+
 // Function to connect and reconnect as necessary to the MQTT server.
 // Should be called in the loop function and it will take care if connecting.
 void MQTT_connect() {
@@ -381,7 +412,10 @@ void MQTT_connect() {
 }
 
 
-////////////////////////////////////////// LIMIT SWITCH INTERRUPTION FUNCTION ///////////////////////////////////////////
+
+///////////////////////////////////////////////////////
+//// TRIGGERED LIMIT SWITCH - INTERRUPTION FUNCTION ///
+///////////////////////////////////////////////////////
 
 ICACHE_RAM_ATTR void triggered_limit_switch() {
   measured_position = 0.0;
@@ -390,7 +424,11 @@ ICACHE_RAM_ATTR void triggered_limit_switch() {
   }
 }
 
-////////////////////////////////////////// ENCODER INTERRUPTION FUNCTION ///////////////////////////////////////////
+
+
+///////////////////////////////////////////////////////
+/////////// ENCODER - INTERRUPTION FUNCTION ///////////
+///////////////////////////////////////////////////////
 
 ICACHE_RAM_ATTR void encoder() {
   if (digitalRead(PIN_encoder_B)) { // we check if the other encoder signal is UP or DOWN
@@ -405,7 +443,10 @@ ICACHE_RAM_ATTR void encoder() {
 }
 
 
-////////////////////////////////////////// MOVE DOWN FUNCTION ///////////////////////////////////////////
+
+///////////////////////////////////////////////////////
+///////////////// MOVE DOWN - FUNCTION ////////////////
+///////////////////////////////////////////////////////
 
 void move_down(int pwm_speed){    // we set the default speed to max speed in case it's not specified ;) 
 
@@ -438,7 +479,10 @@ void move_down(int pwm_speed){    // we set the default speed to max speed in ca
 }
 
 
-////////////////////////////////////////// MOVE UP FUNCTION ///////////////////////////////////////////
+
+///////////////////////////////////////////////////////
+///////////////// MOVE UP - FUNCTION //////////////////
+///////////////////////////////////////////////////////
 
 void move_up(int pwm_speed){    // we set the default speed to max speed in case it's not specified ;) 
 
@@ -469,7 +513,10 @@ void move_up(int pwm_speed){    // we set the default speed to max speed in case
 }
 
 
-////////////////////////////////////////// HOLD POSITION FUNCTION ///////////////////////////////////////////
+
+///////////////////////////////////////////////////////
+////////////// HOLD POSITION - FUNCTION ///////////////
+///////////////////////////////////////////////////////
 
 void hold_position(){    // we press the brake :) 
     Serial.println("hold!");
@@ -483,7 +530,6 @@ void hold_position(){    // we press the brake :)
     Serial.println("STATUS => Stopped");
 
 }
-
 ///////////////////////////////////////////////////////
 ///  //////////////////////////////////////////////////
 ///  //////////////////////////////////////////////////
