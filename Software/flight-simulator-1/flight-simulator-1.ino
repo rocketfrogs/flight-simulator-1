@@ -84,7 +84,6 @@ const float acceptable_position_delta = 10;  // CHANGE TO THE RIGHT VALUE !!! (v
 const float encoder_step = 725./1131;        // encoder measures 1131 ticks for a corresponding distance of 725mm
 
 float target_position = 0;
-int target_speed = 10;  // speed set to 10% of max speed by default
 int pwm_speed = 1023;    // pwm speed set to 10% of max speed by default
 volatile float measured_position = 1000000;  // we initialize at 1 000 000 so the piston think it's very high and try to go down to whatever position it is asked to by MQTT then get initialize when it run into the limit switch
 
@@ -93,8 +92,8 @@ enum {going_up,going_down,stopped} piston_status; // we declare an enum type wit
 
 // Encoder 
 
-#define PIN_encoder_A D6
-#define PIN_encoder_B D5
+#define PIN_encoder_A D5
+#define PIN_encoder_B D6
 
 // limit switch
 #define PIN_limit_switch D7
@@ -165,6 +164,7 @@ void setup() {
 
   // Setup MQTT subscription feeds.
   mqtt.subscribe(&cmnd_position);
+  mqtt.subscribe(&cmnd_speed);
 
 
 
@@ -173,14 +173,14 @@ void setup() {
 
 // INPUTS
 // (Info => https://www.arduino.cc/reference/en/language/functions/external-interrupts/attachinterrupt/)
-pinMode(PIN_encoder_A, INPUT);                                                                // there is a 10K ohm pull-UP connected to that pin
-attachInterrupt(digitalPinToInterrupt(PIN_encoder_A), encoder, FALLING);                      // the hall sensor goes to GROUND when it sense a magnetic field
+pinMode(PIN_encoder_A, INPUT_PULLUP);                                                                // there is a 10K ohm pull-UP connected to that pin
+attachInterrupt(digitalPinToInterrupt(PIN_encoder_A), encoder, RISING);                      // the hall sensor goes to GROUND when it sense a magnetic field
 
-pinMode(PIN_encoder_B, INPUT);                                                                // there is a 10K ohm pull-UP connected to that pin // We do not need interrupt on B as we base interuption on Encoder_A signal
+pinMode(PIN_encoder_B, INPUT_PULLUP);                                                                // there is a 10K ohm pull-UP connected to that pin // We do not need interrupt on B as we base interuption on Encoder_A signal
 
 pinMode(PIN_limit_switch, INPUT);                                                             // there is a 10K ohm pull-DOWN connected to that pin 
-attachInterrupt(digitalPinToInterrupt(PIN_limit_switch), triggered_limit_switch, FALLING);    // the switch pin is connected to VCC during the piston running and become floating when the piston reach it (we are making it ground using the pulldown)
-if (digitalRead(PIN_limit_switch) == LOW) {
+attachInterrupt(digitalPinToInterrupt(PIN_limit_switch), triggered_limit_switch, RISING);    // the switch pin is connected to VCC during the piston running and become floating when the piston reach it (we are making it ground using the pulldown)
+if (digitalRead(PIN_limit_switch) == HIGH) {
   // If the switch is already pressed at start (meaning it is already fully down), we call the  triggered_limit_switch() interrupt fonction now as it will dot see a FALLING edge and therefore will not be able to initialize itself
   triggered_limit_switch();
 }
@@ -222,12 +222,12 @@ delay(50);
       Serial.println((char *)cmnd_position.lastread);
       int temp_target_position = atof((char *)cmnd_position.lastread);
       if (temp_target_position >= 0 && temp_target_position <= max_position) {
-      target_position = temp_target_position;
-      Serial.print("Received New target_position : ");
-      Serial.println(target_position);
+        target_position = temp_target_position;
+        Serial.print("Received New target_position : ");
+        Serial.println(target_position);
       } else {
-      Serial.print("Received UNVALID New target_position : ");
-      Serial.println(temp_target_position);
+        Serial.print("Received UNVALID New target_position : ");
+        Serial.println((char *)cmnd_position.lastread);
       }
     }
 
@@ -235,17 +235,16 @@ delay(50);
     if (subscription == &cmnd_speed) {
       Serial.print(F("Got: "));
       Serial.println((char *)cmnd_speed.lastread);
-      int tmp_target_speed = atof((char *)cmnd_speed.lastread);
-      if (tmp_target_speed >= 0 && tmp_target_speed <= 100) {
-      target_speed = tmp_target_speed;
-      Serial.print("Received New target_speed : ");
-      Serial.println(target_speed);
-      pwm_speed = target_speed * 1023 / 100; // we calculate the pwm speed from the % value
-      Serial.print("Calculated pwm_speed : ");
-      Serial.println(pwm_speed);
+      float pwm_speed_percent = atof((char *)cmnd_speed.lastread);
+      if (pwm_speed_percent >= 0 && pwm_speed_percent <= 100) {
+        Serial.print("Received New target_speed : ");
+        Serial.println(pwm_speed_percent);
+        pwm_speed = pwm_speed_percent * 1023 / 100; // we calculate the pwm speed from the % value
+        Serial.print("Calculated pwm_speed : ");
+        Serial.println(pwm_speed);
       } else {
-      Serial.print("Received UNVALID New onoff status : ");
-      Serial.println(tmp_target_speed);
+        Serial.print("Received INVALID New speed : ");
+        Serial.println((char *)cmnd_speed.lastread);
       }
       
     }
@@ -355,7 +354,7 @@ ICACHE_RAM_ATTR void encoder() {
 void move_down(int pwm_speed){    // we set the default speed to max speed in case it's not specified ;) 
 
 // check the limit switch
-  if(digitalRead(PIN_limit_switch) == HIGH){                                            // the switch is NOT pressed
+  if(digitalRead(PIN_limit_switch) == LOW){                                            // the switch is NOT pressed
     Serial.println("move_down");
     // limit switch unpressed => we CAN go down :)
 
