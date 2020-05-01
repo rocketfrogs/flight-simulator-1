@@ -10,6 +10,9 @@ void hold_position();
 ICACHE_RAM_ATTR void encoder();
 ICACHE_RAM_ATTR void triggered_limit_switch();
 
+/***************************** OTA DEBUG *************************************/
+
+#include "RemoteDebug.h"  //https://github.com/JoaoLopesF/RemoteDebug
 
 
 /************************* WiFi Access Point *********************************/
