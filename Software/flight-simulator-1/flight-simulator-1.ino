@@ -10,9 +10,6 @@ void hold_position();
 ICACHE_RAM_ATTR void encoder();
 ICACHE_RAM_ATTR void triggered_limit_switch();
 
-/***************************** OTA DEBUG *************************************/
-
-#include "RemoteDebug.h"  //https://github.com/JoaoLopesF/RemoteDebug
 
 
 /************************* WiFi Access Point *********************************/
@@ -130,16 +127,6 @@ void setup() {
 
   delay(10);
   Serial.println('\n');
-
-///////////////////////////////////////////////////////
-////////////////// Start Remote Debug /////////////////
-///////////////////////////////////////////////////////
-
-// Init the simple software debugger, based on SerialDebug library
-Debug.initDebugger(debugGetDebuggerEnabled, debugHandleDebugger, debugGetHelpDebugger, debugProcessCmdDebugger); // Set the callbacks
-
-debugInitDebugger(&Debug); // Init the debugger
-
 
 ///////////////////////////////////////////////////////
 //////////////////// Start Wifi ///////////////////////
