@@ -4,7 +4,6 @@
 // Uncomment to enable the features
 //#define ENABLE_OTA
 //#define ENABLE_SERIAL
-#define ENABLE_ENCODER_INTERRUPTS
 
 /////////////////////////////////////////////////////////////////////////
 //////////////////////// functions declarations /////////////////////////
@@ -13,9 +12,6 @@
 void move_down(int pwm_speed = 1023);
 void move_up(int pwm_speed = 1023);
 void hold_position();
-void encoder_up();
-void encoder_down();
-void encoder_error();
 void report_status();
 
 // Special declarations for Interrupt pins
@@ -278,12 +274,7 @@ void setup() {
   ///////// Initialize the position encoder /////////////
   ///////////////////////////////////////////////////////
 
-  Encoder.begin(PIN_encoder_A, PIN_encoder_B, encoder_up, encoder_down, encoder_error,
-#ifdef ENABLE_ENCODER_INTERRUPTS  
-  true);
-#else
-  false);
-#endif
+  EncoderBegin(PIN_encoder_A, PIN_encoder_B);
 
 }
 ///////////////////////////////////////////////////////
@@ -381,6 +372,7 @@ void loop() {
       /// We compare target versus current position
       /// 3 cases plus actions
 
+      measured_position += EncoderGetMovement() * encoder_step;
       if (measured_position <= (target_position - acceptable_position_delta) ) {
         // we are below acceptable target => we go up
         move_up(pwm_speed);
@@ -400,10 +392,6 @@ void loop() {
   }
 
   report_status();
-
-#ifndef ENABLE_ENCODER_INTERRUPTS  
-  Encoder.interrupt();
-#endif
 }
 
 ///////////////////////////////////////////////////////
@@ -489,35 +477,6 @@ ICACHE_RAM_ATTR void triggered_limit_switch() {
 
 
 ///////////////////////////////////////////////////////
-/////////////// ENCODER - CALLBACKS ///////////////////
-///////////////////////////////////////////////////////
-
-// This function is called from encoder.h when the encoder is detecting a movement toward the top
-void encoder_up() {
-  measured_position+=encoder_step;
-  if (measured_position > max_position + 10 && piston_direction == GOINP_UP) {
-    // This should not happen, the loop() function should have stopped the piston before.
-    // Emergency stop!
-    hold_position();
-    tracking_status = TRACKING_HALT;
-  }
-}
-
-// This function is called from encoder.h when the encoder is detecting a movement toward the bottom
-void encoder_down() {
-  measured_position-=encoder_step;
-}
-
-// This function is called from encoder.h when the encoder is detecting an issue
-void encoder_error() {
-#ifdef ENABLE_SERIAL
-  Serial.println("Encoder error, aborting!");
-#endif
-  hold_position();
-  tracking_status = TRACKING_HALT;
-}
-
-///////////////////////////////////////////////////////
 ///////////////// MOVE DOWN - FUNCTION ////////////////
 ///////////////////////////////////////////////////////
 
@@ -587,7 +546,7 @@ void move_up(int pwm_speed){    // we set the default speed to max speed in case
 ////////////// HOLD POSITION - FUNCTION ///////////////
 ///////////////////////////////////////////////////////
 
-void hold_position(){    // we press the brake :) 
+ICACHE_RAM_ATTR void hold_position(){    // we press the brake :) 
     // setting the motor enable PINs to breaking conf
     digitalWrite(PIN_motor_enable_1, HIGH); // Controled by ground so HIGH = OFF
     digitalWrite(PIN_motor_enable_2, HIGH); // Controled by ground so HIGH = OFF
