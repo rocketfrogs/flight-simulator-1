@@ -7,12 +7,14 @@
 #define ENABLE_OTA
 #define ENABLE_SERIAL
 
+#define PWM_MAX_DUTY_CYCLE 100
+
 /////////////////////////////////////////////////////////////////////////
 //////////////////////// functions declarations /////////////////////////
 /////////////////////////////////////////////////////////////////////////
 
-void move_down(int pwm_speed = 1023);
-void move_up(int pwm_speed = 1023);
+void move_down(int pwm_speed = PWM_MAX_DUTY_CYCLE);
+void move_up(int pwm_speed = PWM_MAX_DUTY_CYCLE);
 void hold_position();
 void report_status();
 
@@ -76,10 +78,11 @@ Adafruit_MQTT_Client mqtt(&client, AIO_SERVER, AIO_SERVERPORT, AIO_USERNAME, AIO
 // Setup a feeds for publishing.
 // Notice MQTT paths for AIO follow the form: <username>/feeds/<feedname>
 Adafruit_MQTT_Publish stat_position = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/flight-simulator-1/" DEVICE_NAME "/stat/position"); // to change for each pistons
+Adafruit_MQTT_Publish stat_pwm = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/flight-simulator-1/" DEVICE_NAME "/stat/pwm"); // to change for each pistons
 
 // Setup a feeds for subscribing to changes.
 Adafruit_MQTT_Subscribe cmnd_position = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "/flight-simulator-1/" DEVICE_NAME "/cmnd/position"); // to change for each pistons
-Adafruit_MQTT_Subscribe cmnd_speed = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "/flight-simulator-1/" DEVICE_NAME "/cmnd/speed"); // to change for each pistons
+Adafruit_MQTT_Subscribe cmnd_pwm = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "/flight-simulator-1/" DEVICE_NAME "/cmnd/pwm"); // to change for each pistons
 
 
 // Bug workaround for Arduino 1.6.6, it seems to need a function declaration
@@ -94,8 +97,8 @@ const float acceptable_position_delta = 10;  // CHANGE TO THE RIGHT VALUE !!! (v
 const float encoder_step = 725./4524;        // encoder measures 4524 ticks for a corresponding distance of 725mm
 
 float target_position = 0;
-int pwm_speed = 1023;    // pwm speed set to max speed by default
-volatile float measured_position = 1000000;  // we initialize at 1 000 000 so the piston think it's very high and try to go down to whatever position it is asked to by MQTT then get initialize when it run into the limit switch
+int pwm_speed = PWM_MAX_DUTY_CYCLE;    // pwm speed set to max speed by default
+volatile float measured_position = 0;  // we start at the bottom
 
 // we declare an enum type with possible status for the piston
 enum {
@@ -243,7 +246,7 @@ void setup() {
 
   // Setup MQTT subscription feeds.
   mqtt.subscribe(&cmnd_position);
-  mqtt.subscribe(&cmnd_speed);
+  mqtt.subscribe(&cmnd_pwm);
 
   ///////////////////////////////////////////////////////
   ////////////////// Initialize PINs ////////////////////
@@ -263,6 +266,7 @@ void setup() {
   pinMode(PIN_motor_enable_2, OUTPUT); 
   pinMode(PIN_motor_PWM, OUTPUT); 
   analogWriteFreq(15000);
+  analogWriteRange(PWM_MAX_DUTY_CYCLE);
 
   ///////////////////////////////////////////////////////
   ///////// Start with the calibration //////////////////
@@ -333,7 +337,7 @@ void loop() {
       // Piston is going up just above the switch
       if (measured_position > 40) { // 40mm above the limit switch
         // move down slowly
-        move_down(1023*.4); // note: the piston doesn't have enough power to toggle the limit switch at 30%
+        move_down(PWM_MAX_DUTY_CYCLE*.4); // note: the piston doesn't have enough power to toggle the limit switch at 30%
         tracking_status = TRACKING_CALIBRATION_3;
       }
       break;
@@ -360,10 +364,10 @@ void loop() {
           }
         }
 
-        /// We check speed target from MQTT
-        else if (subscription == &cmnd_speed) {
-          if (value >= 0 && value <= 100) {
-            pwm_speed = value * 1023 / 100; // we calculate the pwm speed from the % value
+        /// We check PWM speed target from MQTT
+        else if (subscription == &cmnd_pwm) {
+          if (value >= 0 && value <= PWM_MAX_DUTY_CYCLE) {
+            pwm_speed = value; // we calculate the pwm speed from the % value
           } else {
 #ifdef ENABLE_SERIAL
             Serial.println("Received INVALID New speed");
@@ -584,6 +588,7 @@ void report_status()
 
   /// we repport status and publish to mqtt
   stat_position.publish(measured_position);
+  stat_pwm.publish(pwm_speed);
 
   previous_millis = millis();
 }
