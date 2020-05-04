@@ -1,10 +1,11 @@
 /////////////////////////////////////////////////////////////////////////
 //////////////////////// Configuration //////////////////////////////////
 /////////////////////////////////////////////////////////////////////////
+#define DEVICE_NAME "piston-1"
+
 // Uncomment to enable the features
-//#define ENABLE_OTA
-//#define ENABLE_SERIAL
-#define ENABLE_ENCODER_INTERRUPTS
+#define ENABLE_OTA
+#define ENABLE_SERIAL
 
 /////////////////////////////////////////////////////////////////////////
 //////////////////////// functions declarations /////////////////////////
@@ -13,9 +14,6 @@
 void move_down(int pwm_speed = 1023);
 void move_up(int pwm_speed = 1023);
 void hold_position();
-void encoder_up();
-void encoder_down();
-void encoder_error();
 void report_status();
 
 // Special declarations for Interrupt pins
@@ -33,8 +31,6 @@ ICACHE_RAM_ATTR void triggered_limit_switch();
 #endif
 #include "credentials.h"        // Include Credentials (you need to create that file in the same folder if you cloned it from git)
 #include "encoder.h"
-
-#define DEVICE_NAME "piston-1"
 
 /*
 Content of "credentials.h" that matters for this section
@@ -98,7 +94,7 @@ const float acceptable_position_delta = 10;  // CHANGE TO THE RIGHT VALUE !!! (v
 const float encoder_step = 725./4524;        // encoder measures 4524 ticks for a corresponding distance of 725mm
 
 float target_position = 0;
-int pwm_speed = 1023;    // pwm speed set to 10% of max speed by default
+int pwm_speed = 1023;    // pwm speed set to max speed by default
 volatile float measured_position = 1000000;  // we initialize at 1 000 000 so the piston think it's very high and try to go down to whatever position it is asked to by MQTT then get initialize when it run into the limit switch
 
 // we declare an enum type with possible status for the piston
@@ -278,12 +274,7 @@ void setup() {
   ///////// Initialize the position encoder /////////////
   ///////////////////////////////////////////////////////
 
-  Encoder.begin(PIN_encoder_A, PIN_encoder_B, encoder_up, encoder_down, encoder_error,
-#ifdef ENABLE_ENCODER_INTERRUPTS  
-  true);
-#else
-  false);
-#endif
+  EncoderBegin(PIN_encoder_A, PIN_encoder_B);
 
 }
 ///////////////////////////////////////////////////////
@@ -314,6 +305,9 @@ void loop() {
 #ifdef ENABLE_OTA
   ArduinoOTA.handle();
 #endif
+
+  // Refresh encoder position
+  measured_position += (float)EncoderGetMovement() * encoder_step;
 
   // Ensure the connection to the MQTT server is alive (this will make the first
   // connection and automatically reconnect when disconnected).  See the MQTT_connect
@@ -380,7 +374,6 @@ void loop() {
 
       /// We compare target versus current position
       /// 3 cases plus actions
-
       if (measured_position <= (target_position - acceptable_position_delta) ) {
         // we are below acceptable target => we go up
         move_up(pwm_speed);
@@ -400,10 +393,6 @@ void loop() {
   }
 
   report_status();
-
-#ifndef ENABLE_ENCODER_INTERRUPTS  
-  Encoder.interrupt();
-#endif
 }
 
 ///////////////////////////////////////////////////////
@@ -489,35 +478,6 @@ ICACHE_RAM_ATTR void triggered_limit_switch() {
 
 
 ///////////////////////////////////////////////////////
-/////////////// ENCODER - CALLBACKS ///////////////////
-///////////////////////////////////////////////////////
-
-// This function is called from encoder.h when the encoder is detecting a movement toward the top
-void encoder_up() {
-  measured_position+=encoder_step;
-  if (measured_position > max_position + 10 && piston_direction == GOINP_UP) {
-    // This should not happen, the loop() function should have stopped the piston before.
-    // Emergency stop!
-    hold_position();
-    tracking_status = TRACKING_HALT;
-  }
-}
-
-// This function is called from encoder.h when the encoder is detecting a movement toward the bottom
-void encoder_down() {
-  measured_position-=encoder_step;
-}
-
-// This function is called from encoder.h when the encoder is detecting an issue
-void encoder_error() {
-#ifdef ENABLE_SERIAL
-  Serial.println("Encoder error, aborting!");
-#endif
-  hold_position();
-  tracking_status = TRACKING_HALT;
-}
-
-///////////////////////////////////////////////////////
 ///////////////// MOVE DOWN - FUNCTION ////////////////
 ///////////////////////////////////////////////////////
 
@@ -587,7 +547,7 @@ void move_up(int pwm_speed){    // we set the default speed to max speed in case
 ////////////// HOLD POSITION - FUNCTION ///////////////
 ///////////////////////////////////////////////////////
 
-void hold_position(){    // we press the brake :) 
+ICACHE_RAM_ATTR void hold_position(){    // we press the brake :) 
     // setting the motor enable PINs to breaking conf
     digitalWrite(PIN_motor_enable_1, HIGH); // Controled by ground so HIGH = OFF
     digitalWrite(PIN_motor_enable_2, HIGH); // Controled by ground so HIGH = OFF
