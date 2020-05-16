@@ -137,8 +137,8 @@ const char* TRACKING_STATUS_MESSAGES[] = {
 
 // Encoder 
 
-#define PIN_encoder_A D6
-#define PIN_encoder_B D5
+#define PIN_encoder_A D5
+#define PIN_encoder_B D6
 
 // limit switch
 #define PIN_limit_switch D7
